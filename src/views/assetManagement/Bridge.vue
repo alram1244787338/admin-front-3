@@ -15,6 +15,7 @@
         </div>
       </template>
 
+      <!-- 筛选区 -->
       <div class="search-bar">
         <el-form :inline="true" :model="searchForm" @submit.prevent>
           <el-form-item label="桥梁名称">
@@ -34,9 +35,14 @@
             />
           </el-form-item>
           <el-form-item label="当前状态">
-            <el-select v-model="searchForm.status" placeholder="全部状态" clearable style="width: 160px">
+            <el-select
+              v-model="searchForm.status"
+              placeholder="全部状态"
+              clearable
+              style="width: 160px"
+            >
               <el-option
-                v-for="item in STATUS_OPTIONS"
+                v-for="item in BRIDGE_STATUS"
                 :key="item.value"
                 :label="item.label"
                 :value="item.value"
@@ -50,7 +56,7 @@
         </el-form>
       </div>
 
-      <!-- 加载失败：内联错误 + 重新加载 -->
+      <!-- 请求失败：内联错误态 + 重新加载，不用假数据掩盖 -->
       <el-result
         v-if="loadError && !loading"
         icon="error"
@@ -111,6 +117,7 @@
             </template>
           </el-table-column>
 
+          <!-- 区分“筛选无结果”与“初次无数据” -->
           <template #empty>
             <el-empty
               :description="hasActiveFilters ? '未找到匹配的桥梁，试试调整筛选条件' : '暂无桥梁数据'"
@@ -132,7 +139,7 @@
       </template>
     </el-card>
 
-    <!-- 新增/编辑对话框 -->
+    <!-- 新增 / 编辑 -->
     <el-dialog
       v-model="dialogVisible"
       :title="dialogTitle"
@@ -160,7 +167,7 @@
             <el-form-item label="桥梁类型" prop="bridgeType">
               <el-select v-model="formData.bridgeType" placeholder="请选择桥梁类型" style="width: 100%">
                 <el-option
-                  v-for="item in BRIDGE_TYPE_OPTIONS"
+                  v-for="item in BRIDGE_TYPE"
                   :key="item.value"
                   :label="item.label"
                   :value="item.value"
@@ -210,7 +217,7 @@
                 style="width: 100%"
               >
                 <el-option
-                  v-for="item in CONDITION_OPTIONS"
+                  v-for="item in CONDITION_LEVEL"
                   :key="item.value"
                   :label="item.label"
                   :value="item.value"
@@ -222,7 +229,7 @@
             <el-form-item label="当前状态" prop="status">
               <el-select v-model="formData.status" placeholder="请选择当前状态" style="width: 100%">
                 <el-option
-                  v-for="item in STATUS_OPTIONS"
+                  v-for="item in BRIDGE_STATUS"
                   :key="item.value"
                   :label="item.label"
                   :value="item.value"
@@ -264,7 +271,7 @@
     </el-dialog>
 
     <!-- 详情抽屉 -->
-    <el-drawer v-model="drawerVisible" title="桥梁详情" size="460px">
+    <el-drawer v-model="drawerVisible" title="桥梁详情" size="460px" @close="handleDrawerClose">
       <div v-loading="detailLoading">
         <el-descriptions v-if="detailData" :column="1" border>
           <el-descriptions-item label="桥梁编码">{{ detailData.bridgeCode || '-' }}</el-descriptions-item>
@@ -290,10 +297,15 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, Refresh, Edit, Delete, View } from '@element-plus/icons-vue'
 import {
+  BRIDGE_STATUS,
+  BRIDGE_TYPE,
+  CONDITION_LEVEL,
+  normalizeListResponse,
+  normalizeDetailResponse,
   getBridgeList,
   getBridgeDetail,
   createBridge,
@@ -301,38 +313,14 @@ import {
   deleteBridge
 } from '../../api/bridge'
 
-// 当前状态枚举（本地常量，不依赖后端字典）
-const STATUS_OPTIONS = [
-  { value: 'in_service', label: '在役', tagType: 'success' },
-  { value: 'maintaining', label: '养护中', tagType: 'warning' },
-  { value: 'closed', label: '封闭', tagType: 'danger' },
-  { value: 'building', label: '在建', tagType: 'info' }
-]
-
-// 桥梁类型枚举
-const BRIDGE_TYPE_OPTIONS = [
-  { value: 'beam', label: '梁桥' },
-  { value: 'arch', label: '拱桥' },
-  { value: 'cable_stayed', label: '斜拉桥' },
-  { value: 'suspension', label: '悬索桥' },
-  { value: 'other', label: '其他' }
-]
-
-// 技术状况等级枚举
-const CONDITION_OPTIONS = [
-  { value: 1, label: '一类' },
-  { value: 2, label: '二类' },
-  { value: 3, label: '三类' },
-  { value: 4, label: '四类' },
-  { value: 5, label: '五类' }
-]
-
-const getStatusMeta = (value) => STATUS_OPTIONS.find((item) => item.value === value)
+// 枚举 -> 展示文本/标签色
+const getStatusMeta = (value) => BRIDGE_STATUS.find((item) => item.value === value)
 const getStatusLabel = (value) => getStatusMeta(value)?.label || '-'
 const getStatusTag = (value) => getStatusMeta(value)?.tagType || 'info'
-const getTypeLabel = (value) => BRIDGE_TYPE_OPTIONS.find((item) => item.value === value)?.label || '-'
-const getConditionLabel = (value) => CONDITION_OPTIONS.find((item) => item.value === value)?.label || '-'
+const getTypeLabel = (value) => BRIDGE_TYPE.find((item) => item.value === value)?.label || '-'
+const getConditionLabel = (value) => CONDITION_LEVEL.find((item) => item.value === value)?.label || '-'
 
+// ===== 列表状态 =====
 const loading = ref(false)
 const loadError = ref(false)
 const tableData = ref([])
@@ -343,14 +331,15 @@ const pagination = reactive({
   total: 0
 })
 
-// 实时输入
+// 实时输入框（未点搜索前不参与请求）
 const searchForm = reactive({
   bridgeName: '',
   lineName: '',
   status: ''
 })
 
-// 已提交的查询快照：分页只用它，保证切页时筛选条件不丢失、也不会输入未点搜索就提前生效
+// 已提交的查询快照：分页/刷新只读它，保证切页时条件不丢失，
+// 也避免“输入未点搜索就提前生效”。
 const activeQuery = reactive({
   bridgeName: '',
   lineName: '',
@@ -361,6 +350,62 @@ const hasActiveFilters = computed(() =>
   Boolean(activeQuery.bridgeName || activeQuery.lineName || activeQuery.status)
 )
 
+const fetchList = async () => {
+  loading.value = true
+  loadError.value = false
+  try {
+    const params = {
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+      ...(activeQuery.bridgeName ? { bridgeName: activeQuery.bridgeName } : {}),
+      ...(activeQuery.lineName ? { lineName: activeQuery.lineName } : {}),
+      ...(activeQuery.status ? { status: activeQuery.status } : {})
+    }
+    const res = await getBridgeList(params)
+    const { list, total } = normalizeListResponse(res)
+    tableData.value = list
+    pagination.total = total
+  } catch (error) {
+    // request 拦截器已统一弹一次错误，这里只切失败态，不重复提示、不造假数据
+    loadError.value = true
+    tableData.value = []
+    pagination.total = 0
+  } finally {
+    loading.value = false
+  }
+}
+
+// 搜索：提交查询快照并回到第一页
+const handleSearch = () => {
+  pagination.page = 1
+  Object.assign(activeQuery, {
+    bridgeName: searchForm.bridgeName,
+    lineName: searchForm.lineName,
+    status: searchForm.status
+  })
+  fetchList()
+}
+
+// 重置：清空输入与查询快照
+const handleReset = () => {
+  Object.assign(searchForm, { bridgeName: '', lineName: '', status: '' })
+  Object.assign(activeQuery, { bridgeName: '', lineName: '', status: '' })
+  pagination.page = 1
+  fetchList()
+}
+
+const handleSizeChange = (size) => {
+  pagination.pageSize = size
+  pagination.page = 1
+  fetchList()
+}
+
+const handleCurrentChange = (page) => {
+  pagination.page = page
+  fetchList()
+}
+
+// ===== 新增 / 编辑 =====
 const dialogVisible = ref(false)
 const dialogTitle = ref('新增桥梁')
 const submitLoading = ref(false)
@@ -400,70 +445,16 @@ const rules = {
   contactPhone: [{ validator: validateContactPhone, trigger: 'blur' }]
 }
 
-const drawerVisible = ref(false)
-const detailLoading = ref(false)
-const detailData = ref(null)
-
-// 获取桥梁列表
-const fetchList = async () => {
-  loading.value = true
-  loadError.value = false
-  try {
-    const params = {
-      page: pagination.page,
-      pageSize: pagination.pageSize,
-      ...(activeQuery.bridgeName ? { bridgeName: activeQuery.bridgeName } : {}),
-      ...(activeQuery.lineName ? { lineName: activeQuery.lineName } : {}),
-      ...(activeQuery.status ? { status: activeQuery.status } : {})
-    }
-    const res = await getBridgeList(params)
-    const list = res.data?.list || res.data || res.list || []
-    tableData.value = Array.isArray(list) ? list : []
-    pagination.total = res.data?.total ?? res.total ?? tableData.value.length
-  } catch (error) {
-    // request 拦截器已统一弹一次错误提示，这里只切到失败态，不重复 toast、不用假数据掩盖
-    loadError.value = true
-    tableData.value = []
-    pagination.total = 0
-  } finally {
-    loading.value = false
-  }
-}
-
-// 搜索：提交查询快照并回到第一页
-const handleSearch = () => {
-  pagination.page = 1
-  Object.assign(activeQuery, {
-    bridgeName: searchForm.bridgeName,
-    lineName: searchForm.lineName,
-    status: searchForm.status
-  })
-  fetchList()
-}
-
-// 重置：清空输入与查询快照
-const handleReset = () => {
-  Object.assign(searchForm, { bridgeName: '', lineName: '', status: '' })
-  Object.assign(activeQuery, { bridgeName: '', lineName: '', status: '' })
-  pagination.page = 1
-  fetchList()
-}
-
-const handleSizeChange = (size) => {
-  pagination.pageSize = size
-  pagination.page = 1
-  fetchList()
-}
-
-const handleCurrentChange = (page) => {
-  pagination.page = page
-  fetchList()
+// 打开弹窗后清掉上一次可能残留的校验红框
+const clearValidateNextTick = () => {
+  nextTick(() => formRef.value?.clearValidate())
 }
 
 const handleAdd = () => {
   dialogTitle.value = '新增桥梁'
   Object.assign(formData, createDefaultForm())
   dialogVisible.value = true
+  clearValidateNextTick()
 }
 
 const handleEdit = (row) => {
@@ -485,47 +476,7 @@ const handleEdit = (row) => {
     remark: row.remark ?? ''
   })
   dialogVisible.value = true
-}
-
-const handleViewDetail = async (row) => {
-  drawerVisible.value = true
-  detailLoading.value = true
-  detailData.value = row
-  try {
-    const res = await getBridgeDetail(row.id)
-    const detail = res.data || res
-    if (detail && typeof detail === 'object') {
-      detailData.value = { ...row, ...detail }
-    }
-  } catch (error) {
-    // 详情接口失败时退回列表行数据，request 已统一弹错误
-    detailData.value = row
-  } finally {
-    detailLoading.value = false
-  }
-}
-
-const handleDelete = async (row) => {
-  try {
-    await ElMessageBox.confirm(
-      `确定要删除桥梁「${row.bridgeName || row.bridgeCode || ''}」吗?`,
-      '提示',
-      {
-        confirmButtonText: '确定',
-        cancelButtonText: '取消',
-        type: 'warning'
-      }
-    )
-    await deleteBridge(row.id)
-    ElMessage.success('删除成功')
-    // 删除当前页最后一条且非首页时回退一页，避免停在空页
-    if (tableData.value.length === 1 && pagination.page > 1) {
-      pagination.page -= 1
-    }
-    fetchList()
-  } catch (error) {
-    // 取消确认时 error === 'cancel'；接口失败时 request 已统一弹错误，无需重复提示
-  }
+  clearValidateNextTick()
 }
 
 const handleSubmit = async () => {
@@ -536,6 +487,7 @@ const handleSubmit = async () => {
 
     submitLoading.value = true
     try {
+      // undefined 的数值字段会被 JSON 序列化自动丢弃，后端按缺省处理
       const payload = {
         bridgeCode: formData.bridgeCode,
         bridgeName: formData.bridgeName,
@@ -562,7 +514,7 @@ const handleSubmit = async () => {
       dialogVisible.value = false
       fetchList()
     } catch (error) {
-      // 提交失败：弹窗保持打开可重试，request 已统一弹错误
+      // 提交失败时弹窗保持打开可重试，request 已统一弹错误
     } finally {
       submitLoading.value = false
     }
@@ -572,6 +524,58 @@ const handleSubmit = async () => {
 const handleDialogClose = () => {
   formRef.value?.resetFields()
   Object.assign(formData, createDefaultForm())
+}
+
+// ===== 详情抽屉 =====
+const drawerVisible = ref(false)
+const detailLoading = ref(false)
+const detailData = ref(null)
+
+const handleViewDetail = async (row) => {
+  drawerVisible.value = true
+  detailLoading.value = true
+  detailData.value = row // 先用列表行兜底，详情接口回来再合并
+  try {
+    const res = await getBridgeDetail(row.id)
+    const detail = normalizeDetailResponse(res)
+    if (detail) {
+      detailData.value = { ...row, ...detail }
+    }
+  } catch (error) {
+    // 详情失败退回列表行数据，request 已统一弹错误
+    detailData.value = row
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+const handleDrawerClose = () => {
+  detailData.value = null
+  detailLoading.value = false
+}
+
+// ===== 删除 =====
+const handleDelete = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除桥梁「${row.bridgeName || row.bridgeCode || ''}」吗?`,
+      '提示',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    await deleteBridge(row.id)
+    ElMessage.success('删除成功')
+    // 删除当前页最后一条且非首页时回退一页，避免停在空页
+    if (tableData.value.length === 1 && pagination.page > 1) {
+      pagination.page -= 1
+    }
+    fetchList()
+  } catch (error) {
+    // 取消确认时 error === 'cancel'；接口失败 request 已统一弹错误
+  }
 }
 
 onMounted(() => {
