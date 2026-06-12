@@ -315,6 +315,21 @@
     return tree
   }
 
+  // 收集指定节点（含自身）在树中的所有 id —— 用于阻止把上级菜单设为自身或其子孙节点，
+  // 否则会形成环，buildMenuTree 无法从根遍历到该子树，菜单会同时从树表和侧边栏消失
+  const collectSelfAndDescendantIds = (nodes = [], targetId, isCollecting = false, acc = new Set()) => {
+    nodes.forEach((node) => {
+      const inSubtree = isCollecting || node.id === targetId
+      if (inSubtree) {
+        acc.add(node.id)
+      }
+      if (node.children?.length) {
+        collectSelfAndDescendantIds(node.children, targetId, inSubtree, acc)
+      }
+    })
+    return acc
+  }
+
   // 获取菜单列表
   const fetchMenuList = async () => {
     loading.value = true
@@ -420,9 +435,12 @@
 
     await formRef.value.validate(async (valid) => {
       if (valid) {
-        if (formData.id && formData.parentId === formData.id) {
-          ElMessage.warning('上级菜单不能选择当前菜单本身')
-          return
+        if (formData.id && formData.parentId != null) {
+          const forbiddenParentIds = collectSelfAndDescendantIds(tableData.value, formData.id)
+          if (forbiddenParentIds.has(formData.parentId)) {
+            ElMessage.warning('上级菜单不能选择当前菜单本身或其子级菜单')
+            return
+          }
         }
 
         submitLoading.value = true

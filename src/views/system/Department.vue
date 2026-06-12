@@ -283,7 +283,7 @@ const buildDepartmentPayload = () => ({
   ...(formData.leaderId ? { leaderId: formData.leaderId } : {}),
   ...(formData.phone ? { phone: formData.phone } : {}),
   ...(formData.email ? { email: formData.email } : {}),
-  ...(formData.sort ? { sort: formData.sort } : {}),
+  sort: formData.sort,
   ...(formData.description ? { description: formData.description } : {})
 })
 

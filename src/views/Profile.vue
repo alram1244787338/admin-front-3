@@ -110,21 +110,15 @@ import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UserFilled, Edit, Lock } from '@element-plus/icons-vue'
 import { useUserStore } from '../stores/user'
+import { API_BASE_URL } from '../utils/request'
 
 const userStore = useUserStore()
 
-// 头像URL - 根据avatarId生成
+// 头像URL - 根据 avatarId 生成，基址复用 request.js 的统一配置
 const avatarUrl = computed(() => {
-  console.log('6666=>',userStore.userInfo)
   const avatarId = userStore.userInfo?.avatarId
-
-  if (avatarId) {
-    // 使用与request.js相同的baseURL配置
-    const baseURL = import.meta.env.DEV ? '/api' : 'http://8.130.84.165:3001'
-    return `${baseURL}/upload/image/${avatarId}?download=false`
-    console.log('7777=>',baseURL)
-  }
-  return ''
+  if (!avatarId) return ''
+  return `${API_BASE_URL}/upload/image/${avatarId}?download=false`
 })
 
 // 编辑资料对话框

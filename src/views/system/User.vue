@@ -223,27 +223,9 @@ const fetchUserList = async () => {
     }))
     pagination.total = res.data?.total || res.total || tableData.value.length
   } catch (error) {
-    ElMessage.error('获取用户列表失败')
-    // 使用模拟数据
-    tableData.value = [
-      {
-        id: 1,
-        username: 'admin',
-        email: 'admin@example.com',
-        roleNames: '管理员',
-        status: 1,
-        createdAt: '2024-11-01 10:00:00'
-      },
-      {
-        id: 2,
-        username: 'user1',
-        email: 'user1@example.com',
-        roleNames: '普通用户',
-        status: 1,
-        createdAt: '2024-11-02 11:00:00'
-      }
-    ]
-    pagination.total = 2
+    tableData.value = []
+    pagination.total = 0
+    ElMessage.error(error.message || '获取用户列表失败')
   } finally {
     loading.value = false
   }
