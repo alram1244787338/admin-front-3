@@ -4,7 +4,7 @@
       <template #header>
         <div class="card-header">
           <span>用户管理</span>
-          <el-button type="primary" :icon="Plus" @click="handleAdd">新增用户</el-button>
+          <el-button type="primary" :icon="Plus" @click="openCreate">新增用户</el-button>
         </div>
       </template>
 
@@ -64,7 +64,7 @@
       v-model="dialogVisible"
       :title="dialogTitle"
       width="600px"
-      @close="handleDialogClose"
+      @close="handleClose"
     >
       <el-form
         ref="formRef"
@@ -101,7 +101,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit" :loading="submitLoading">确定</el-button>
+        <el-button type="primary" @click="submitForm" :loading="submitLoading">确定</el-button>
       </template>
     </el-dialog>
 
@@ -142,49 +142,19 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ref, onMounted, computed } from 'vue'
+import { ElMessage } from 'element-plus'
 import { Plus, Search, Refresh, Edit, Delete, UserFilled } from '@element-plus/icons-vue'
 import { getUserList, createUser, updateUser, deleteUser, getUserDetail, assignUserRoles } from '../../api/user'
 import { getDepartmentList } from '../../api/department'
 import { getRoleList } from '../../api/role'
+import { useTable } from '../../composables/useTable'
+import { useDialogForm } from '../../composables/useDialogForm'
+import { useDeleteConfirm } from '../../composables/useCrudActions'
+import { unwrapList } from '../../utils/response'
+import { buildUserPayload } from '../../utils/payload'
 
-const loading = ref(false)
-const submitLoading = ref(false)
-const dialogVisible = ref(false)
-const dialogTitle = ref('新增用户')
-const formRef = ref(null)
 const departmentTree = ref([])
-const roleDialogVisible = ref(false)
-const roleDialogTitle = ref('分配角色')
-const roleDialogLoading = ref(false)
-const roleSubmitLoading = ref(false)
-const roleOptions = ref([])
-const selectedRoleIds = ref([])
-const currentRoleUserId = ref(null)
-
-const searchForm = reactive({
-  username: '',
-  email: ''
-})
-
-const pagination = reactive({
-  page: 1,
-  pageSize: 10,
-  total: 0
-})
-
-const tableData = ref([])
-
-const formData = reactive({
-  id: null,
-  username: '',
-  email: '',
-  departmentId: null,
-  password: '',
-  status: 1
-})
-
 const departmentTreeOptions = computed(() => departmentTree.value)
 
 const rules = {
@@ -205,83 +175,64 @@ const rules = {
   ]
 }
 
-// 获取用户列表
-const fetchUserList = async () => {
-  loading.value = true
-  try {
-    const params = {
-      page: pagination.page,
-      pageSize: pagination.pageSize,
-      ...searchForm
+// 列表加载 + 分页 + 搜索
+const {
+  loading,
+  tableData,
+  pagination,
+  searchForm,
+  load: fetchUserList,
+  handleSearch,
+  handleReset,
+  handleSizeChange,
+  handleCurrentChange
+} = useTable(getUserList, {
+  searchForm: { username: '', email: '' },
+  transform: (list) => list.map((user) => ({
+    ...user,
+    departmentName: user.department?.name || '-',
+    roleNames: user.roles?.map((item) => item.role?.name).filter(Boolean).join('、') || '-'
+  })),
+  errorMessage: '获取用户列表失败'
+})
+
+// 新增/编辑弹窗
+const {
+  dialogVisible,
+  dialogTitle,
+  submitLoading,
+  formRef,
+  formData,
+  openCreate,
+  openEdit,
+  submitForm,
+  handleClose
+} = useDialogForm({
+  defaultForm: {
+    id: null,
+    username: '',
+    email: '',
+    departmentId: null,
+    password: '',
+    status: 1
+  },
+  submit: async (form, { isEdit }) => {
+    const payload = buildUserPayload(form)
+    if (isEdit) {
+      await updateUser(form.id, payload)
+      ElMessage.success('更新成功')
+    } else {
+      await createUser({ ...payload, password: form.password })
+      ElMessage.success('创建成功')
     }
-    const res = await getUserList(params)
-    const users = res.data?.list || res.data || res.list || []
-    tableData.value = users.map(user => ({
-      ...user,
-      departmentName: user.department?.name || '-',
-      roleNames: user.roles?.map(item => item.role?.name).filter(Boolean).join('、') || '-'
-    }))
-    pagination.total = res.data?.total || res.total || tableData.value.length
-  } catch (error) {
-    ElMessage.error('获取用户列表失败')
-    // 使用模拟数据
-    tableData.value = [
-      {
-        id: 1,
-        username: 'admin',
-        email: 'admin@example.com',
-        roleNames: '管理员',
-        status: 1,
-        createdAt: '2024-11-01 10:00:00'
-      },
-      {
-        id: 2,
-        username: 'user1',
-        email: 'user1@example.com',
-        roleNames: '普通用户',
-        status: 1,
-        createdAt: '2024-11-02 11:00:00'
-      }
-    ]
-    pagination.total = 2
-  } finally {
-    loading.value = false
-  }
-}
+  },
+  onSuccess: fetchUserList,
+  createTitle: '新增用户',
+  editTitle: '编辑用户'
+})
 
-const fetchDepartmentTree = async () => {
-  try {
-    const res = await getDepartmentList()
-    departmentTree.value = res.data || res.list || []
-  } catch (error) {
-    departmentTree.value = []
-    ElMessage.error(error.message || '获取部门列表失败')
-  }
-}
-
-// 搜索
-const handleSearch = () => {
-  pagination.page = 1
-  fetchUserList()
-}
-
-// 重置
-const handleReset = () => {
-  searchForm.username = ''
-  searchForm.email = ''
-  handleSearch()
-}
-
-// 新增
-const handleAdd = () => {
-  dialogTitle.value = '新增用户'
-  dialogVisible.value = true
-}
-
-// 编辑
 const handleEdit = (row) => {
-  dialogTitle.value = '编辑用户'
-  Object.assign(formData, {
+  openEdit({
     id: row.id,
     username: row.username,
     email: row.email || '',
@@ -289,13 +240,33 @@ const handleEdit = (row) => {
     password: '',
     status: row.status ?? 1
   })
-  dialogVisible.value = true
 }
 
-const fetchRoleOptions = async () => {
-  const res = await getRoleList({ page: 1, pageSize: 1000 })
-  roleOptions.value = res.data?.list || res.data || res.list || []
+// 删除
+const handleDelete = useDeleteConfirm({
+  api: deleteUser,
+  onSuccess: fetchUserList,
+  confirmText: '确定要删除该用户吗?'
+})
+
+const fetchDepartmentTree = async () => {
+  try {
+    const res = await getDepartmentList()
+    departmentTree.value = unwrapList(res)
+  } catch (error) {
+    departmentTree.value = []
+    ElMessage.error(error.message || '获取部门列表失败')
+  }
 }
+
+// ==================== 角色分配（页面自有逻辑） ====================
+const roleDialogVisible = ref(false)
+const roleDialogTitle = ref('分配角色')
+const roleDialogLoading = ref(false)
+const roleSubmitLoading = ref(false)
+const roleOptions = ref([])
+const selectedRoleIds = ref([])
+const currentRoleUserId = ref(null)
 
 const extractUserRoleIds = (user) => {
   return (user?.roles || [])
@@ -315,7 +286,7 @@ const handleAssignRoles = async (row) => {
       getUserDetail(row.id)
     ])
 
-    roleOptions.value = roleRes.data?.list || roleRes.data || roleRes.list || []
+    roleOptions.value = unwrapList(roleRes)
     const userDetail = userRes.data || userRes
     selectedRoleIds.value = extractUserRoleIds(userDetail)
   } catch (error) {
@@ -323,24 +294,6 @@ const handleAssignRoles = async (row) => {
     roleDialogVisible.value = false
   } finally {
     roleDialogLoading.value = false
-  }
-}
-
-// 删除
-const handleDelete = async (row) => {
-  try {
-    await ElMessageBox.confirm('确定要删除该用户吗?', '提示', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning'
-    })
-    await deleteUser(row.id)
-    ElMessage.success('删除成功')
-    fetchUserList()
-  } catch (error) {
-    if (error !== 'cancel') {
-      ElMessage.error('删除失败')
-    }
   }
 }
 
@@ -360,75 +313,13 @@ const handleRoleSubmit = async () => {
   }
 }
 
-// 提交
-const handleSubmit = async () => {
-  if (!formRef.value) return
-
-  await formRef.value.validate(async (valid) => {
-    if (valid) {
-      submitLoading.value = true
-      try {
-        const payload = {
-          username: formData.username,
-          email: formData.email,
-          ...(formData.departmentId ? { departmentId: formData.departmentId } : {}),
-          status: formData.status
-        }
-
-        if (formData.id) {
-          await updateUser(formData.id, payload)
-          ElMessage.success('更新成功')
-        } else {
-          await createUser({
-            ...payload,
-            password: formData.password
-          })
-          ElMessage.success('创建成功')
-        }
-        dialogVisible.value = false
-        fetchUserList()
-      } catch (error) {
-        ElMessage.error(error.message || '操作失败')
-      } finally {
-        submitLoading.value = false
-      }
-    }
-  })
-}
-
-// 对话框关闭
-const handleDialogClose = () => {
-  formRef.value?.resetFields()
-  Object.assign(formData, {
-    id: null,
-    username: '',
-    email: '',
-    departmentId: null,
-    password: '',
-    status: 1
-  })
-}
-
 const handleRoleDialogClose = () => {
   currentRoleUserId.value = null
   roleDialogTitle.value = '分配角色'
   selectedRoleIds.value = []
 }
 
-// 分页
-const handleSizeChange = () => {
-  fetchUserList()
-}
-
-const handleCurrentChange = () => {
-  fetchUserList()
-}
-
-onMounted(() => {
-  fetchDepartmentTree()
-  fetchRoleOptions()
-  fetchUserList()
-})
+onMounted(fetchDepartmentTree)
 </script>
 
 <style scoped>
